@@ -1,6 +1,6 @@
 # AI Customer Support Ticket Router (Powered by Jev)
 
-An intelligent customer support ticket classification and decision routing engine built with Python and Streamlit, powered by **TypeSafe System One (Jev)**.
+An intelligent customer support ticket classification and decision routing engine built with **FastAPI** and **React**, powered by **TypeSafe System One (Jev)** and integrated with **Atlassian Jira Cloud**.
 
 The router accepts customer support messages and utilizes Jev's fast semantic judgment engine to simultaneously predict:
 1. **Ticket Category** (with calibrated probability)
@@ -154,15 +154,20 @@ export TYPESAFE_API_KEY="your_typesafe_api_key_here"
 ---
 
 ## 🖥️ Running the Application
-
-Launch the Streamlit interface:
+ 
+1. **Start the FastAPI Backend Server**:
 ```bash
-streamlit run app.py
+python -m uvicorn server:app --port 8000 --reload
 ```
 
-Open your browser at `http://localhost:8501`.
+2. **Launch the React + Vite Frontend**:
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Using the 3 Tabs:
+Open your browser at `http://localhost:5173`.
 
 ### Application Interface:
 
