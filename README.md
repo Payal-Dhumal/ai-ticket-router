@@ -178,10 +178,29 @@ Open your browser at `http://localhost:8501`.
 
 ---
 
+## 🔗 Phase 2: Jira Cloud Integration
+
+SupportRoute seamlessly synchronizes real AI classifications directly into **Atlassian Jira Cloud**:
+- **Automatic Issue Creation**: When classification confidence meets the configured threshold ($\ge 70\%$), a native Jira Task is automatically created in the configured project (e.g. `SUP`) with customer context, intent, priority, and recommended actions.
+- **Confidence Gate & Manual Review**: Low-confidence predictions are safely held for human triage, with manual "Create in Jira" and "Retry" options.
+- **Direct Deep Links**: Displays real Jira issue keys (`SUP-104`) with clickable `[Open in Jira →]` links in both the Single Ticket Analyzer and Ticket Queue table.
+- **Settings & Connectivity Test**: Built-in integration dashboard in Settings with live connection status indicators and on-demand handshake verification.
+
+### Jira Configuration
+Set the following variables in `.env`:
+```env
+JIRA_URL=https://your-domain.atlassian.net
+JIRA_EMAIL=your_email@example.com
+JIRA_API_TOKEN=your_jira_api_token
+JIRA_PROJECT_KEY=SUP
+```
+
+---
+
 ## 🧪 Running Tests
 
 Run the full automated test suite with pytest:
 ```bash
 python -m pytest -v
 ```
-All 22 test cases cover live API calls, input validation, probability calculations, CSV handling, and recommendation rules.
+All 29 test cases cover live API calls, input validation, probability calculations, CSV handling, recommendation rules, and Jira Cloud integration.

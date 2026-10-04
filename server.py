@@ -25,6 +25,12 @@ from src.jev_router import (
     JevRouter,
     is_jev_configured,
 )
+from src.jira_service import (
+    create_jira_issue,
+    get_jira_config,
+    is_jira_configured,
+    test_jira_connection,
+)
 from src.probability import format_percentage
 from src.ticket_processor import TicketProcessor
 from src.utils import CSVValidationError, convert_df_to_csv_bytes, validate_and_load_csv
@@ -46,6 +52,18 @@ class ClassifyRequest(BaseModel):
     threshold: float = 0.70
 
 
+class JiraCreateRequest(BaseModel):
+    ticket: Optional[str] = None
+    ticket_text: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    department: Optional[str] = None
+    confidence: Optional[str] = None
+    recommended_action: Optional[str] = None
+    status: Optional[str] = None
+    ai_result: Optional[Dict[str, Any]] = None
+
+
 class BatchItem(BaseModel):
     ticket_id: Optional[str] = None
     ticket: str
@@ -62,13 +80,55 @@ processed_tickets_store: List[Dict[str, Any]] = []
 
 @app.get("/api/status")
 def get_status() -> Dict[str, Any]:
-    """Check Jev configuration status."""
+    """Check Jev and Jira configuration status."""
     configured = is_jev_configured()
+    jira_cfg = get_jira_config()
     return {
         "configured": configured,
         "model": "TypeSafe System One (Jev)",
         "service": "AI Customer Support Ticket Router",
+        "jira": {
+            "configured": is_jira_configured(),
+            "project_key": jira_cfg.get("project_key", "SUP"),
+            "url": jira_cfg.get("url", ""),
+        },
     }
+
+
+@app.get("/api/jira/status")
+def get_jira_status() -> Dict[str, Any]:
+    """Check Jira Cloud configuration."""
+    jira_cfg = get_jira_config()
+    return {
+        "configured": is_jira_configured(),
+        "project_key": jira_cfg.get("project_key", "SUP"),
+        "url": jira_cfg.get("url", ""),
+    }
+
+
+@app.post("/api/jira/test-connection")
+def test_jira_endpoint() -> Dict[str, Any]:
+    """Test live authentication and connectivity to Jira Cloud."""
+    return test_jira_connection()
+
+
+@app.post("/api/jira/create-ticket")
+def create_jira_ticket_endpoint(req: JiraCreateRequest) -> Dict[str, Any]:
+    """Manually create or retry Jira issue from an analyzed ticket."""
+    ai_res = req.ai_result or {}
+    ticket_text = req.ticket_text or req.ticket or ai_res.get("ticket", "")
+    
+    ai_data = {
+        "ticket": ticket_text,
+        "category": req.category or ai_res.get("category", "General Support"),
+        "priority": req.priority or ai_res.get("priority", "Medium"),
+        "department": req.department or ai_res.get("department", "General Support"),
+        "confidence": req.confidence or ai_res.get("category_probability") or ai_res.get("confidence", "N/A"),
+        "category_probability": req.confidence or ai_res.get("category_probability") or ai_res.get("confidence", "N/A"),
+        "recommended_action": req.recommended_action or ai_res.get("recommended_action", ""),
+        "status": req.status or ai_res.get("status", "Routed"),
+    }
+    return create_jira_issue(ai_data, ticket_text=ticket_text)
 
 
 @app.get("/api/tickets")
@@ -89,7 +149,7 @@ def clear_tickets() -> Dict[str, Any]:
 
 @app.post("/api/classify")
 def classify_ticket(req: ClassifyRequest) -> Dict[str, Any]:
-    """Classify a single support ticket."""
+    """Classify a single support ticket and automatically route/create Jira issue."""
     if not req.ticket or not req.ticket.strip():
         raise HTTPException(status_code=400, detail="Customer message cannot be empty.")
 
@@ -104,6 +164,48 @@ def classify_ticket(req: ClassifyRequest) -> Dict[str, Any]:
         processor = TicketProcessor(router=router)
         result = processor.process_ticket(req.ticket.strip(), threshold=req.threshold)
         
+        # Confidence Rule:
+        # If confidence >= configured threshold -> create Jira issue
+        # If confidence < configured threshold -> do not automatically create Jira issue
+        conf_num = result.get("category_probability_raw", 0.0)
+        is_above_threshold = conf_num >= req.threshold
+
+        jira_info = None
+        if is_above_threshold:
+            if is_jira_configured():
+                try:
+                    jira_resp = create_jira_issue(result, ticket_text=req.ticket.strip())
+                    if jira_resp.get("success"):
+                        jira_info = {
+                            "created": True,
+                            "issue_key": jira_resp.get("issue_key"),
+                            "issue_url": jira_resp.get("issue_url"),
+                            "project_key": jira_resp.get("project_key"),
+                        }
+                    else:
+                        jira_info = {
+                            "created": False,
+                            "error": jira_resp.get("error", "AI analysis completed, but Jira ticket creation failed."),
+                        }
+                except Exception as je:
+                    jira_info = {
+                        "created": False,
+                        "error": f"AI analysis completed, but Jira ticket creation failed: {str(je)}",
+                    }
+            else:
+                jira_info = {
+                    "created": False,
+                    "error": "Jira is not configured. Please set JIRA_URL, JIRA_EMAIL, and JIRA_API_TOKEN in backend .env.",
+                }
+        else:
+            jira_info = {
+                "created": False,
+                "skipped": True,
+                "reason": f"Confidence ({result.get('category_probability', '0%')}) is below configured cutoff ({int(req.threshold * 100)}%). Manual review required.",
+            }
+
+        result["jira"] = jira_info
+
         # Save real ticket record to store
         record = {
             "ticket_id": f"TICK-{len(processed_tickets_store) + 1:04d}",
@@ -116,6 +218,8 @@ def classify_ticket(req: ClassifyRequest) -> Dict[str, Any]:
             "status": "Review" if result.get("is_low_confidence") else "Routed",
             "created_at": "Just now",
             "recommended_action": result.get("recommended_action", ""),
+            "jira_issue_key": jira_info.get("issue_key") if jira_info and jira_info.get("created") else None,
+            "jira_issue_url": jira_info.get("issue_url") if jira_info and jira_info.get("created") else None,
         }
         processed_tickets_store.insert(0, record)
         return result

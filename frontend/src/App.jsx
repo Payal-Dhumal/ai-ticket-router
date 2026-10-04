@@ -262,6 +262,12 @@ export default function App() {
   const [autoEscalate, setAutoEscalate] = useState(true);
   const [defaultDepartment, setDefaultDepartment] = useState('General Support');
 
+  // Jira Integration State
+  const [isCreatingJira, setIsCreatingJira] = useState(false);
+  const [jiraStatus, setJiraStatus] = useState({ configured: false, connected: false, project_key: 'SUP', url: '' });
+  const [isTestingJira, setIsTestingJira] = useState(false);
+  const [jiraTestFeedback, setJiraTestFeedback] = useState(null);
+
   const inputContainerRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -285,13 +291,90 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch backend status
+  // Fetch backend status including Jira
   useEffect(() => {
     fetch('/api/status')
       .then((res) => res.json())
-      .then((data) => setStatus({ configured: data.configured, loading: false }))
+      .then((data) => {
+        setStatus({ configured: data.configured, loading: false });
+        if (data.jira) {
+          setJiraStatus((prev) => ({
+            ...prev,
+            configured: !!data.jira.configured,
+            connected: !!data.jira.configured,
+            project_key: data.jira.project_key || 'SUP',
+            url: data.jira.url || '',
+          }));
+        }
+      })
       .catch(() => setStatus({ configured: false, loading: false }));
   }, []);
+
+  // Handler to manually create Jira ticket or retry
+  const handleCreateJiraManual = async (result, text) => {
+    if (!result) return;
+    setIsCreatingJira(true);
+    try {
+      const res = await fetch('/api/jira/create-ticket', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticket_text: text || ticketInput,
+          ai_result: result,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to create Jira ticket');
+      }
+      setSingleResult((prev) => ({
+        ...prev,
+        jira: {
+          created: true,
+          issue_key: data.issue_key,
+          issue_url: data.issue_url,
+          project_key: data.project_key,
+        },
+      }));
+      setTicketsList((prev) =>
+        prev.map((t, idx) => (idx === 0 ? { ...t, jira_issue_key: data.issue_key, jira_issue_url: data.issue_url } : t))
+      );
+      showToast(`Jira ticket ${data.issue_key} created successfully!`);
+    } catch (err) {
+      setSingleResult((prev) => ({
+        ...prev,
+        jira: {
+          created: false,
+          error: 'AI analysis completed, but Jira ticket creation failed: ' + err.message,
+        },
+      }));
+      showToast('Jira creation failed: ' + err.message);
+    } finally {
+      setIsCreatingJira(false);
+    }
+  };
+
+  // Handler to test Jira connection
+  const handleTestJiraConnection = async () => {
+    setIsTestingJira(true);
+    setJiraTestFeedback(null);
+    try {
+      const res = await fetch('/api/jira/test-connection', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success && data.connected) {
+        setJiraStatus((prev) => ({ ...prev, connected: true, project_key: data.project || prev.project_key }));
+        setJiraTestFeedback({ success: true, message: `Connected as ${data.user || 'Jira User'} to project ${data.project}!` });
+      } else {
+        setJiraStatus((prev) => ({ ...prev, connected: false }));
+        setJiraTestFeedback({ success: false, message: data.error || 'Connection test failed.' });
+      }
+    } catch (err) {
+      setJiraStatus((prev) => ({ ...prev, connected: false }));
+      setJiraTestFeedback({ success: false, message: 'Could not reach server: ' + err.message });
+    } finally {
+      setIsTestingJira(false);
+    }
+  };
 
   // Handle single ticket analysis
   const handleAnalyzeSingle = async () => {
@@ -336,6 +419,8 @@ export default function App() {
         created_at: 'Just now',
         timestamp: Date.now(),
         recommended_action: data.recommended_action,
+        jira_issue_key: data.jira?.issue_key || null,
+        jira_issue_url: data.jira?.issue_url || null,
       };
 
       setTicketsList((prev) => [newTicketRecord, ...prev]);
@@ -1479,6 +1564,88 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Settings Card 3: Jira Integration */}
+              <div
+                style={{
+                  backgroundColor: '#ffffff',
+                  borderRadius: '12px',
+                  border: '1px solid #e2e8f0',
+                  padding: '24px',
+                  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.04)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <h2 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                    Jira Integration
+                  </h2>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        backgroundColor: jiraStatus.connected ? '#16a34a' : (jiraStatus.configured ? '#0284c7' : '#94a3b8'),
+                      }}
+                    />
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: jiraStatus.connected ? '#16a34a' : '#475569' }}>
+                      {jiraStatus.connected ? 'Connected' : (jiraStatus.configured ? 'Configured' : 'Not Connected')}
+                    </span>
+                  </div>
+                </div>
+                <p style={{ fontSize: '0.80rem', color: '#64748b', margin: '0 0 16px 0' }}>
+                  Automatically synchronize routed customer support tickets directly to Atlassian Jira Cloud upon AI analysis.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '20px' }}>
+                  <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', marginBottom: '3px' }}>Jira Project</div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>{jiraStatus.project_key || 'SUP'}</div>
+                  </div>
+                  <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', marginBottom: '3px' }}>Instance Host</div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {jiraStatus.url ? jiraStatus.url.replace(/^https?:\/\//, '') : 'payaldhumal94.atlassian.net'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '12px 14px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', marginBottom: '3px' }}>Issue Type</div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>Task</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
+                  <div style={{ fontSize: '0.76rem', color: '#64748b' }}>
+                    {jiraTestFeedback && (
+                      <span style={{ color: jiraTestFeedback.success ? '#16a34a' : '#dc2626', fontWeight: 500 }}>
+                        {jiraTestFeedback.message}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleTestJiraConnection}
+                    disabled={isTestingJira}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      border: '1px solid #cbd5e1',
+                      backgroundColor: '#ffffff',
+                      color: '#0f172a',
+                      fontSize: '0.80rem',
+                      fontWeight: 600,
+                      cursor: isTestingJira ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isTestingJira ? <Loader2 size={14} className="animate-spin-fast" /> : <RefreshCw size={14} />}
+                    Test Jira Connection
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -2039,6 +2206,159 @@ export default function App() {
                           <div style={{ fontSize: '0.68rem', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px', fontWeight: 600 }}>Action Guidance</div>
                           <div style={{ fontSize: '0.78rem', color: '#334155', lineHeight: 1.4 }}>{singleResult.recommended_action}</div>
                         </div>
+
+                        {/* Jira Ticket Section */}
+                        {singleResult.jira && (
+                          <div style={{ marginTop: '2px' }}>
+                            {singleResult.jira.created && singleResult.jira.issue_key ? (
+                              <div
+                                style={{
+                                  padding: '14px 16px',
+                                  backgroundColor: '#f0fdf4',
+                                  borderRadius: '8px',
+                                  border: '1px solid #bbf7d0',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: '12px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <div
+                                    style={{
+                                      width: '32px',
+                                      height: '32px',
+                                      borderRadius: '8px',
+                                      backgroundColor: '#dcfce7',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                    }}
+                                  >
+                                    <CheckCircle2 size={18} color="#16a34a" />
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '0.74rem', fontWeight: 600, color: '#15803d' }}>
+                                      ✓ Jira Ticket Created
+                                    </div>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0f172a', letterSpacing: '0.02em', marginTop: '1px' }}>
+                                      {singleResult.jira.issue_key}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <a
+                                  href={singleResult.jira.issue_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '8px 14px',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#059669',
+                                    color: '#ffffff',
+                                    fontSize: '0.80rem',
+                                    fontWeight: 600,
+                                    textDecoration: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <span>Open in Jira →</span>
+                                </a>
+                              </div>
+                            ) : singleResult.jira.error ? (
+                              <div
+                                style={{
+                                  padding: '12px 14px',
+                                  backgroundColor: '#fef2f2',
+                                  borderRadius: '8px',
+                                  border: '1px solid #fecaca',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '8px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#b91c1c', fontSize: '0.78rem', fontWeight: 600 }}>
+                                  <AlertTriangle size={16} />
+                                  <span>AI analysis completed, but Jira ticket creation failed.</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                                  <span style={{ fontSize: '0.72rem', color: '#dc2626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {typeof singleResult.jira.error === 'string' ? singleResult.jira.error : 'Jira API error'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCreateJiraManual(singleResult, ticketInput)}
+                                    disabled={isCreatingJira}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      padding: '5px 12px',
+                                      borderRadius: '6px',
+                                      backgroundColor: '#ffffff',
+                                      border: '1px solid #dc2626',
+                                      color: '#dc2626',
+                                      fontSize: '0.74rem',
+                                      fontWeight: 600,
+                                      cursor: isCreatingJira ? 'not-allowed' : 'pointer',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {isCreatingJira ? <Loader2 size={12} className="animate-spin-fast" /> : <RefreshCw size={12} />}
+                                    <span>Retry Jira Creation</span>
+                                  </button>
+                                </div>
+                              </div>
+                            ) : singleResult.jira.skipped ? (
+                              <div
+                                style={{
+                                  padding: '10px 12px',
+                                  backgroundColor: '#f8fafc',
+                                  borderRadius: '8px',
+                                  border: '1px solid #e2e8f0',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: '10px',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f59e0b' }} />
+                                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                                    Confidence below cutoff ({singleResult.category_probability}). Manual review required.
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCreateJiraManual(singleResult, ticketInput)}
+                                  disabled={isCreatingJira}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    padding: '5px 11px',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#0f172a',
+                                    color: '#ffffff',
+                                    border: 'none',
+                                    fontSize: '0.74rem',
+                                    fontWeight: 600,
+                                    cursor: isCreatingJira ? 'not-allowed' : 'pointer',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {isCreatingJira ? <Loader2 size={12} className="animate-spin-fast" /> : <ExternalLink size={12} />}
+                                  <span>Create Jira Ticket</span>
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2424,7 +2744,33 @@ export default function App() {
                           >
                             {/* Ticket ID */}
                             <td style={{ padding: '12px 20px', whiteSpace: 'nowrap', fontWeight: 500, color: '#334155' }}>
-                              {row.ticket_id}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>{row.ticket_id}</span>
+                                {row.jira_issue_key && (
+                                  <a
+                                    href={row.jira_issue_url || `https://payaldhumal94.atlassian.net/browse/${row.jira_issue_key}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title={`Open Jira: ${row.jira_issue_key}`}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      padding: '1px 6px',
+                                      borderRadius: '4px',
+                                      backgroundColor: '#eff6ff',
+                                      color: '#1d4ed8',
+                                      border: '1px solid #bfdbfe',
+                                      fontSize: '0.68rem',
+                                      fontWeight: 600,
+                                      textDecoration: 'none',
+                                    }}
+                                  >
+                                    <span>{row.jira_issue_key}</span>
+                                    <ExternalLink size={10} />
+                                  </a>
+                                )}
+                              </div>
                             </td>
 
                             {/* Customer Message */}
@@ -3094,6 +3440,67 @@ export default function App() {
                 <div style={{ fontSize: '0.82rem', color: '#064e3b', lineHeight: 1.5 }}>
                   {selectedTicketDetail.recommended_action}
                 </div>
+              </div>
+            )}
+
+            {/* Jira Integration Details Box */}
+            {selectedTicketDetail.jira_issue_key && (
+              <div
+                style={{
+                  marginBottom: '24px',
+                  padding: '14px 16px',
+                  borderRadius: '10px',
+                  backgroundColor: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '8px',
+                      backgroundColor: '#dcfce7',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <CheckCircle2 size={18} color="#16a34a" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#15803d', textTransform: 'uppercase' }}>
+                      Jira Ticket Synced
+                    </div>
+                    <div style={{ fontSize: '0.96rem', fontWeight: 800, color: '#0f172a' }}>
+                      {selectedTicketDetail.jira_issue_key}
+                    </div>
+                  </div>
+                </div>
+
+                <a
+                  href={selectedTicketDetail.jira_issue_url || `https://payaldhumal94.atlassian.net/browse/${selectedTicketDetail.jira_issue_key}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 14px',
+                    borderRadius: '6px',
+                    backgroundColor: '#059669',
+                    color: '#ffffff',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    textDecoration: 'none',
+                  }}
+                >
+                  <span>Open in Jira →</span>
+                </a>
               </div>
             )}
 
