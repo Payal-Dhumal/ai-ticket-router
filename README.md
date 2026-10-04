@@ -86,16 +86,32 @@ Jev computes exact probability distributions across candidate choices:
 
 ```mermaid
 flowchart TD
-    A["Customer Ticket / CSV Batch"] --> B["ticket_processor.py"]
-    B --> C["src/jev_router.py (JevRouter)"]
-    C -->|"State + 3 Choice Primitives"| D["TypeSafe System One API (Jev)"]
-    D -->|"Category, Priority, Department + Probabilities"| C
-    C --> E["src/probability.py (Formatting & ASCII Bars)"]
-    C --> F["src/recommendations.py (Action Guidance)"]
-    E --> G["Streamlit Web Application (app.py)"]
-    F --> G
-    G --> H["Single Ticket Analysis"]
-    G --> I["Batch Analysis"]
+    subgraph Frontend ["Frontend (React + Vite)"]
+        UI["SupportRoute Web UI\n(Single Analyzer · Batch Workstation · Queue · Analytics · Settings)"]
+    end
+
+    subgraph Backend ["Backend API (FastAPI)"]
+        API["FastAPI Endpoints\n(/api/classify · /api/tickets · /api/jira/*)"]
+        PROC["ticket_processor.py & recommendations.py"]
+        ROUTER["src/jev_router.py (JevRouter)"]
+        JIRA["src/jira_service.py"]
+    end
+
+    subgraph Cloud ["External AI & Cloud Services"]
+        JEV["TypeSafe Jev Engine\n(System One Classification & Probability Calibration)"]
+        ATLASSIAN["Atlassian Jira Cloud REST API v2\n(Issue Sync · Project SUP)"]
+    end
+
+    UI -->|"HTTP / REST API"| API
+    API --> PROC
+    PROC --> ROUTER
+    ROUTER -->|"Choice Primitives"| JEV
+    JEV -->|"Category, Priority, Department + Calibrated Probabilities"| ROUTER
+    API -->|"Confidence >= Threshold"| JIRA
+    JIRA -->|"Create Task & Sync Ticket"| ATLASSIAN
+    ATLASSIAN -->|"Return Issue Key & Direct URL"| JIRA
+    JIRA --> API
+    API -->|"Real-time Classification + Jira Status"| UI
 ```
 
 ---
@@ -103,25 +119,40 @@ flowchart TD
 ## 📁 Project Structure
 
 ```text
-customer-support-router/
+ai-ticket-router/
 │
-├── app.py                      # Streamlit application (Single Ticket & Batch Analysis)
-├── data/
-│   └── sample_tickets.csv      # 110 realistic evaluation tickets across all categories
-├── src/
+├── frontend/                   # Modern React + Vite Single Page Application
+│   ├── src/
+│   │   ├── App.jsx             # SupportRoute UI (Workstations, Live Jira cards, Analytics, Settings)
+│   │   ├── main.jsx            # React root mount
+│   │   └── index.css           # Styling & design system tokens
+│   ├── package.json            # Frontend dependencies (React 19, Lucide icons, Vite)
+│   └── vite.config.js          # Vite build config with backend API proxy
+│
+├── server.py                   # High-performance FastAPI backend REST API
+│
+├── src/                        # Core Python Intelligence & Routing Services
 │   ├── __init__.py
-│   ├── jev_router.py           # Isolated Jev classification & decision engine
-│   ├── ticket_processor.py     # Single & batch processing pipeline
+│   ├── jev_router.py           # Isolated TypeSafe Jev System One decision engine
+│   ├── ticket_processor.py     # Single & batch evaluation pipeline
+│   ├── jira_service.py         # Atlassian Jira Cloud REST API v2 integration
 │   ├── probability.py          # Probability formatting, thresholding, ASCII bars
-│   ├── recommendations.py      # Business action & operational advice engine
+│   ├── recommendations.py      # Automated business action & guidance engine
 │   └── utils.py                # CSV validation, metrics calculation, data export
-├── tests/
-│   ├── test_router.py          # Router tests & live API validation
+│
+├── tests/                      # Automated Test Suite (29 Pytest Cases)
+│   ├── test_jira_service.py    # Jira Cloud API integration & mock tests
+│   ├── test_router.py          # Jev router tests & live API validation
 │   ├── test_probability.py     # Probability helper & threshold tests
 │   ├── test_recommendations.py # Recommendation rule tests
-│   └── test_ticket_processor.py# CSV parsing & dashboard metrics tests
-├── requirements.txt            # Project dependencies
-└── README.md                   # Complete documentation
+│   └── test_ticket_processor.py# Pipeline & batch processing tests
+│
+├── data/
+│   └── sample_tickets.csv      # 110 realistic evaluation tickets across all categories
+│
+├── requirements.txt            # Python dependencies (FastAPI, uvicorn, typesafe-sdk, requests, etc.)
+├── .env.example                # Sanitized environment template for Jev & Jira
+└── README.md                   # Complete system documentation
 ```
 
 ---
