@@ -2748,7 +2748,7 @@ export default function App() {
                                 <span>{row.ticket_id}</span>
                                 {row.jira_issue_key && (
                                   <a
-                                    href={row.jira_issue_url || `https://payaldhumal94.atlassian.net/browse/${row.jira_issue_key}`}
+                                    href={row.jira_issue_url || `https://payaldhumal94.atlassian.net/jira/servicedesk/projects/SUP/list?selectedIssue=${row.jira_issue_key}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     title={`Open Jira: ${row.jira_issue_key}`}
@@ -3483,7 +3483,7 @@ export default function App() {
                 </div>
 
                 <a
-                  href={selectedTicketDetail.jira_issue_url || `https://payaldhumal94.atlassian.net/browse/${selectedTicketDetail.jira_issue_key}`}
+                  href={selectedTicketDetail.jira_issue_url || `https://payaldhumal94.atlassian.net/jira/servicedesk/projects/SUP/list?selectedIssue=${selectedTicketDetail.jira_issue_key}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{

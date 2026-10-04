@@ -157,12 +157,16 @@ def create_jira_issue(
             data = resp.json()
             issue_key = data.get("key")
             issue_id = data.get("id")
-            issue_url = f"{cfg['url']}/browse/{issue_key}"
+            # URL to the Jira Service Desk All Work list view with the issue selected in drawer
+            list_url = f"{cfg['url']}/jira/servicedesk/projects/{cfg['project_key']}/list?selectedIssue={issue_key}"
+            browse_url = f"{cfg['url']}/browse/{issue_key}"
             return {
                 "success": True,
                 "issue_key": issue_key,
                 "issue_id": issue_id,
-                "issue_url": issue_url,
+                "issue_url": list_url,
+                "list_url": list_url,
+                "browse_url": browse_url,
                 "project_key": cfg["project_key"],
             }
         else:

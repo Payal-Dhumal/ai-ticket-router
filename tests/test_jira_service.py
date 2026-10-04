@@ -57,7 +57,8 @@ def test_create_jira_issue_mocked_success():
         res = create_jira_issue(sample_ai_result, sample_text)
         assert res["success"] is True
         assert res["issue_key"] == "SUP-105"
-        assert "payaldhumal94.atlassian.net/browse/SUP-105" in res["issue_url"]
+        assert "SUP-105" in res["issue_url"]
+        assert "payaldhumal94.atlassian.net" in res["issue_url"]
         assert res["project_key"] == "SUP"
         assert mock_post.called
 
